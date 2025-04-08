@@ -1,0 +1,19 @@
+<!-- Example city.sumocfg -->
+<configuration>
+    <input>
+        <net-file value="city.net.xml"/>
+        <route-files value="city.rou.xml"/>
+        <!-- <additional-files value="passengers.add.xml"/> --> <!-- Optional static additions -->
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="3600"/>       <!-- Simulation end time (e.g., 1 hour) -->
+        <step-length value="1"/> <!-- Simulation step length (seconds) -->
+    </time>
+    <processing>
+         <ignore-route-errors value="true"/>
+    </processing>
+     <routing>
+        <device.rerouting.probability value="1"/> <!-- Ensure rerouting device is active -->
+     </routing>
+</configuration>
