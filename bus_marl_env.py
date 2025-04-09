@@ -206,14 +206,16 @@ class SumoBusMARLEnv(ParallelEnv):
             self.sumo_binary,
             "-c", self.config_file,
             "--step-length", "1",    # Ensure step length matches environment logic
-            "--remote-port", str(sumolib.miscutils.getFreeSocketPort()),
+            # REMOVE THIS LINE: "--remote-port", str(sumolib.miscutils.getFreeSocketPort()),
             "--quit-on-end",
-            # "--collision.action", "remove", # Handle collisions
+            # "--collision.action", "remove", # Optional: Handle collisions
             "--waiting-time-memory", str(MAX_STEPS), # Store waiting times
-            # "--no-warnings", "true", # Suppress SUMO warnings if needed
+            # "--no-warnings", "true", # Optional: Suppress SUMO warnings if needed
+            # Add other necessary SUMO options here
         ]
+        # traci.start will automatically find a free port and add --remote-port
         traci.start(sumo_cmd)
-        self.traci_conn = traci # Store connection object if needed elsewhere
+        self.traci_conn = traci # Store connection object
 
     def _get_observation(self, agent_id):
         """Generates the observation for a single agent."""
@@ -478,72 +480,114 @@ class SumoBusMARLEnv(ParallelEnv):
 
         return rewards
 
-    def _remove_agent(self, agent_id):
-        """Removes an agent from internal tracking."""
-        if agent_id in self.agents:
-            self.agents.remove(agent_id)
-        # Clean up bus_data if necessary
-        if agent_id in self.bus_data:
-            # Release any passengers? Depends on logic. Assume they get stranded for now.
-            del self.bus_data[agent_id]
-        # print(f"Removed agent {agent_id}")
-
-
     def reset(self, seed=None, options=None):
         """Resets the environment to a starting state."""
+        print("Resetting environment...") # Debug print
         if self.traci_conn:
-            traci.close()
-            self.traci_conn = None
+            try:
+                traci.close()
+            except Exception as e:
+                print(f"Ignoring error during TraCI close on reset: {e}")
+            finally:
+                self.traci_conn = None
 
-        # Set seed if provided (for passenger spawning, etc.)
+        # Set seed if provided
         if seed is not None:
              random.seed(seed)
              np.random.seed(seed)
-             # Note: SUMO's internal randomness might also need seeding via config/params
 
-        self._start_sumo()
+        try:
+            self._start_sumo()
+        except Exception as e:
+             print(f"Failed to start SUMO during reset: {e}")
+             if self.traci_conn:
+                  try: traci.close()
+                  except: pass
+                  self.traci_conn = None
+             raise RuntimeError(f"Could not start SUMO simulation in reset: {e}") from e
+
         self.current_step = 0
-        self.agents = self.possible_agents[:] # Reset active agents
+        self.agents = self.possible_agents[:]
         self.passenger_data = {}
         self.bus_data = {agent_id: {'edge': None, 'passengers': set(), 'next_junction': None} for agent_id in self.agents}
 
-        # Add initial buses if not defined in rou.xml or if you want to override
-        # Example: Adding buses dynamically
-        # existing_buses = traci.vehicle.getIDList()
-        # for i, agent_id in enumerate(self.possible_agents):
-        #      if agent_id not in existing_buses:
-        #           start_edge = random.choice(self.edge_list) # Choose random start
-        #           try:
-        #                traci.vehicle.add(agent_id, routeID="", typeID="BUS", depart=str(i*2), departLane="best", departPos="base", departSpeed="max")
-        #                traci.vehicle.changeTarget(agent_id, start_edge) # Give it an initial target
-        #                print(f"Dynamically added {agent_id} at {start_edge}")
-        #           except traci.TraCIException as e:
-        #                print(f"Failed to add bus {agent_id}: {e}")
-        #                # Handle failure - maybe remove agent?
-        #                if agent_id in self.agents: self.agents.remove(agent_id)
-        #                if agent_id in self.bus_data: del self.bus_data[agent_id]
+        # --- Add initial buses if not defined in rou.xml ---
+        # Make sure your city.rou.xml defines the vehicles bus_0, bus_1, ...
+        # Or uncomment and adapt this section if you need dynamic adding:
+        # try:
+        #     existing_buses_in_sim = traci.vehicle.getIDList()
+        #     print(f"Buses defined in rou.xml (or already added): {existing_buses_in_sim}")
+        #     for i, agent_id in enumerate(self.possible_agents):
+        #          if agent_id not in existing_buses_in_sim:
+        #               # Choose a valid starting edge from your network
+        #               # start_edge = random.choice(self.edge_list) # Example: random start
+        #               start_edge = "westTop___intersectionNW" # Example: specific start edge
+        #               if start_edge not in self.edge_to_int:
+        #                    print(f"Warning: Chosen start edge '{start_edge}' not in network edge list. Check edge IDs.")
+        #                    # Fallback or error handling needed here
+        #                    valid_edges = [e for e in self.edge_list if not e.startswith(':')]
+        #                    if not valid_edges: raise ValueError("No valid non-internal edges found in the network to start a bus.")
+        #                    start_edge = random.choice(valid_edges)
+        #                    print(f"Using fallback start edge: {start_edge}")
+
+        #               print(f"Attempting to dynamically add {agent_id} departing at step {i*2} on edge {start_edge}")
+        #               # Use add 'full' to specify type, route, etc.
+        #               traci.vehicle.add(vehID=agent_id, routeID="", typeID="BUS", depart=str(i*2), departLane="best", departPos="base", departSpeed="max")
+        #               traci.vehicle.changeTarget(agent_id, start_edge) # Give it an initial target edge
+        #               print(f"Dynamically added {agent_id}")
+        # except traci.TraCIException as e:
+        #      print(f"TraCI Error during dynamic bus adding: {e}")
+        #      # Handle failure - maybe raise error?
+        #      raise RuntimeError(f"Failed to add bus {agent_id} dynamically: {e}") from e
+        # except Exception as e:
+        #      print(f"Unexpected error during dynamic bus adding: {e}")
+        #      raise
 
 
-        # Initial simulation step to place vehicles correctly
-        traci.simulationStep()
-        self.current_step += 1
+                # Initial simulation step
+        try:
+            print("Performing initial simulation step...")
+            traci.simulationStep()
+            self.current_step += 1
+            print("Initial step complete.")
+        except traci.TraCIException as e:
+            print(f"TraCI Error during initial simulation step: {e}. SUMO likely closed.")
+            self.close()
+            raise RuntimeError(f"SUMO closed unexpectedly during initial step: {e}") from e
 
-        # Update initial bus data
-        for agent_id in self.agents[:]: # Iterate copy for safe removal
-             try:
-                  if agent_id in traci.vehicle.getIDList():
-                       self.bus_data[agent_id]['edge'] = traci.vehicle.getRoadID(agent_id)
-                  else: # Bus failed to spawn or was removed immediately
-                       self._remove_agent(agent_id)
-             except traci.TraCIException:
-                  self._remove_agent(agent_id)
+        # Verify all agents exist and update initial data
+        try:
+            current_sim_vehicles = set(traci.vehicle.getIDList())
+            print(f"Vehicles present after initial step: {current_sim_vehicles}")
+            missing_agents = []
+            for agent_id in self.possible_agents:
+                if agent_id in current_sim_vehicles:
+                    try:
+                        self.bus_data[agent_id]['edge'] = traci.vehicle.getRoadID(agent_id)
+                        print(f"Agent {agent_id} confirmed at edge: {self.bus_data[agent_id]['edge']}")
+                    except traci.TraCIException as e:
+                        print(f"TraCI Error getting initial state for {agent_id} (might have crashed immediately): {e}")
+                        missing_agents.append(agent_id)
+                else:
+                    print(f"Error: Agent {agent_id} not found in simulation after initial step!")
+                    missing_agents.append(agent_id)
 
+            if missing_agents:
+                self.close()
+                raise RuntimeError(f"Environment reset failed: Agents {missing_agents} did not spawn correctly or disappeared immediately. Check route file and SUMO logs.")
 
-        # Get initial observations
-        observations = {agent_id: self._get_observation(agent_id) for agent_id in self.agents}
-        infos = {agent_id: {} for agent_id in self.agents} # Provide empty info dict
+        except traci.TraCIException as e:
+             print(f"TraCI Error verifying agents after initial step: {e}")
+             self.close()
+             raise RuntimeError(f"SUMO connection lost while verifying initial agent state: {e}") from e
 
-        # print(f"Reset complete. Active agents: {self.agents}")
+         # Get initial observations for all possible agents
+        observations = {agent_id: self._get_observation(agent_id) for agent_id in self.possible_agents}
+        # REINSTATE INFOS DICTIONARY
+        infos = {agent_id: {} for agent_id in self.possible_agents}
+
+        print(f"Reset complete. Active agents: {self.agents}")
+        # Return BOTH observations and infos as per PettingZoo standard
         return observations, infos
 
 

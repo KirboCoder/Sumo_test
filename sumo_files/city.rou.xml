@@ -1,14 +1,15 @@
-<!-- Example city.rou.xml -->
+<!-- TEMPORARY TEST city.rou.xml -->
 <routes>
-    <vType id="BUS" vClass="bus" color="1,1,0" guiShape="bus" length="12" maxSpeed="15.0">
+    <vType id="BUS" vClass="bus" color="1,1,0" guiShape="bus" length="12" maxSpeed="13.89">
         <param key="has.rerouting.device" value="true"/>
     </vType>
-    <!-- Define initial buses (can also be added via TraCI) -->
+
+    <!-- Define ONLY bus_0 with a SINGLE, known valid edge -->
     <vehicle id="bus_0" type="BUS" depart="0" departLane="best">
-         <route edges="edge_start edge_intermediate edge_end"/> <!-- Example initial route -->
+         <route edges="westTop___intersectionNW"/> <!-- Use ONE edge you are SURE exists -->
     </vehicle>
-    <vehicle id="bus_1" type="BUS" depart="5" departLane="best">
-         <route edges="edge_start2 edge_intermediate2 edge_end2"/>
+
+    <vehicle id="bus_1" type="BUS" depart="0" departLane="best">
+         <route edges="northLeft___intersectionNW intersectionNW___intersectionSW intersectionSW___southLeft"/>
     </vehicle>
-    <!-- Passengers can be added via TraCI -->
 </routes>
